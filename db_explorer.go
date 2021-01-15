@@ -112,6 +112,16 @@ func (h *Handler) GetRows(w http.ResponseWriter, r *http.Request) {
 	params := rowsURLRe.FindStringSubmatch(r.URL.Path)
 	tableName := params[1]
 
+	limit, err := strconv.Atoi(r.FormValue("limit"))
+	if err != nil || limit < 0 {
+		limit = 5
+	}
+
+	offset, err := strconv.Atoi(r.FormValue("offset"))
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+
 	var table *Table
 	for _, t := range h.tables {
 		if t.Name == tableName {
@@ -125,7 +135,7 @@ func (h *Handler) GetRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.DB.Query("SELECT * FROM " + table.Name)
+	rows, err := h.DB.Query("SELECT * FROM " + table.Name + " LIMIT ? OFFSET ?", limit, offset)
 	defer rows.Close()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -133,8 +143,15 @@ func (h *Handler) GetRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	data, err := rowsToMap(rows)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeErr(w, err)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
-	writeJSON(w, rowsToMap(rows))
+	writeJSON(w, data)
 }
 
 // utils
@@ -160,28 +177,28 @@ func method(m string, next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func rowsToMap(rows *sql.Rows) []map[string]interface{} {
+func rowsToMap(rows *sql.Rows) ([]map[string]interface{}, error) {
 	columns, err := rows.Columns()
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 
-	values := make([]interface{}, len(columns))
+	values := make([]interface{}, len(columns)) 
 
-	scanArgs := make([]interface{}, len(values))
+	scanArgs := make([]interface{}, len(values)) 
 	for i := range values {
 		scanArgs[i] = &values[i]
 	}
 
-	results := make(map[string]interface{})
 	data := []map[string]interface{}{}
 
 	for rows.Next() {
 		err = rows.Scan(scanArgs...)
 		if err != nil {
-			panic(err.Error())
+			return nil, err
 		}
 
+		results := make(map[string]interface{})
 		for i, value := range values {
 			switch value.(type) {
 				case nil:
@@ -206,5 +223,5 @@ func rowsToMap(rows *sql.Rows) []map[string]interface{} {
 		data = append(data, results)
 	}
 
-	return data
+	return data, nil
 }
