@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+
 	// "strings"
-	"fmt"
-	// "reflect"
+
+	"strconv"
 )
 
 // тут вы пишете код
@@ -78,7 +79,7 @@ func getColumns(db *sql.DB, tableName string) ([]TableColumn, error) {
 
 	for rows.Next() {
 		col := TableColumn{}
-		err := rows.Scan(&col.Name, &col.Type, &col.Null, &col.Key, &col.Default,&col.Extra)
+		err := rows.Scan(&col.Name, &col.Type, &col.Null, &col.Key, &col.Default, &col.Extra)
 		if err != nil {
 			return columns, err
 		}
@@ -125,49 +126,15 @@ func (h *Handler) GetRows(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.DB.Query("SELECT * FROM " + table.Name)
+	defer rows.Close()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		writeErr(w,err)
+		writeErr(w, err)
 		return
 	}
-
-	cols, err := rows.Columns()
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		writeErr(w,err)
-		return
-	}
-
-	allgeneric := make([]map[string]interface{},0)
-	colvals := make([]interface{}, len(cols))
-	for rows.Next() {
-		colassoc := make(map[string]interface{}, len(cols))
-		// values we"ll be passing will be pointers, themselves to interfaces
-		for i, _ := range colvals {
-		  colvals[i] = new(interface{})
-		}
-		if err := rows.Scan(colvals...); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			writeErr(w,err)
-			return
-		}
-		for i, col := range cols {
-			rawVal := *colvals[i].(*interface{})
-			val, ok := rawVal.([]byte)
-			if !ok {
-				colassoc[col] = rawVal
-				continue
-			}
-
-			colassoc[col] = string(val)
-		//   fmt.Printf("%s: %T %s\n", col, colassoc[col], colassoc[col] )
-		}
-		fmt.Println(colassoc)
-		allgeneric = append(allgeneric, colassoc)
-	  }
 
 	w.WriteHeader(http.StatusOK)
-	writeJSON(w, allgeneric)
+	writeJSON(w, rowsToMap(rows))
 }
 
 // utils
@@ -191,4 +158,53 @@ func method(m string, next http.HandlerFunc) http.HandlerFunc {
 		// TODO method
 		next(w, r)
 	}
+}
+
+func rowsToMap(rows *sql.Rows) []map[string]interface{} {
+	columns, err := rows.Columns()
+	if err != nil {
+		panic(err.Error())
+	}
+
+	values := make([]interface{}, len(columns))
+
+	scanArgs := make([]interface{}, len(values))
+	for i := range values {
+		scanArgs[i] = &values[i]
+	}
+
+	results := make(map[string]interface{})
+	data := []map[string]interface{}{}
+
+	for rows.Next() {
+		err = rows.Scan(scanArgs...)
+		if err != nil {
+			panic(err.Error())
+		}
+
+		for i, value := range values {
+			switch value.(type) {
+				case nil:
+					results[columns[i]] = nil
+
+				case []byte:
+					s := string(value.([]byte))
+					x, err := strconv.Atoi(s)
+
+					if err != nil {
+						results[columns[i]] = s
+					} else {
+						results[columns[i]] = x
+					}
+
+
+				default:
+					results[columns[i]] = value
+			}
+		}
+
+		data = append(data, results)
+	}
+
+	return data
 }
