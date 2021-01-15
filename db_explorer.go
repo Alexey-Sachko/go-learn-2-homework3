@@ -4,6 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"regexp"
+	// "strings"
+	"fmt"
+	// "reflect"
 )
 
 // тут вы пишете код
@@ -34,11 +38,8 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 		return nil, err
 	}
 
-	handler := Handler{DB: db, tables: tables}
-
-	mux := &http.ServeMux{}
-	mux.HandleFunc("/", method(http.MethodGet, handler.GetTables))
-	return mux, nil
+	handler := &Handler{DB: db, tables: tables}
+	return handler, nil
 }
 
 func getTables(db *sql.DB) ([]Table, error) {
@@ -88,9 +89,85 @@ func getColumns(db *sql.DB, tableName string) ([]TableColumn, error) {
 	return columns, nil
 }
 
+var rowsURLRe = regexp.MustCompile("/([^?/.]+)$")
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/" {
+		h.GetTables(w, r)
+	} else if rowsURLRe.MatchString(r.URL.Path) {
+		h.GetRows(w, r)
+	} else {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("Not Found"))
+	}
+}
+
 func (h *Handler) GetTables(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	writeJSON(w, h.tables)
+}
+
+func (h *Handler) GetRows(w http.ResponseWriter, r *http.Request) {
+	params := rowsURLRe.FindStringSubmatch(r.URL.Path)
+	tableName := params[1]
+
+	var table *Table
+	for _, t := range h.tables {
+		if t.Name == tableName {
+			table = &t
+			break
+		}
+	}
+
+	if table == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	rows, err := h.DB.Query("SELECT * FROM " + table.Name)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeErr(w,err)
+		return
+	}
+
+	cols, err := rows.Columns()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeErr(w,err)
+		return
+	}
+
+	allgeneric := make([]map[string]interface{},0)
+	colvals := make([]interface{}, len(cols))
+	for rows.Next() {
+		colassoc := make(map[string]interface{}, len(cols))
+		// values we"ll be passing will be pointers, themselves to interfaces
+		for i, _ := range colvals {
+		  colvals[i] = new(interface{})
+		}
+		if err := rows.Scan(colvals...); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			writeErr(w,err)
+			return
+		}
+		for i, col := range cols {
+			rawVal := *colvals[i].(*interface{})
+			val, ok := rawVal.([]byte)
+			if !ok {
+				colassoc[col] = rawVal
+				continue
+			}
+
+			colassoc[col] = string(val)
+		//   fmt.Printf("%s: %T %s\n", col, colassoc[col], colassoc[col] )
+		}
+		fmt.Println(colassoc)
+		allgeneric = append(allgeneric, colassoc)
+	  }
+
+	w.WriteHeader(http.StatusOK)
+	writeJSON(w, allgeneric)
 }
 
 // utils
