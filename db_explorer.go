@@ -3,9 +3,11 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 
 	// "strings"
 
@@ -111,7 +113,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" {
 		h.GetTables(w, r)
 	} else if rowsURLRe.MatchString(r.URL.Path) {
-		h.GetRows(w, r)
+		if r.Method == http.MethodGet {
+			h.GetRows(w, r)
+		} else if r.Method == http.MethodPost {
+			h.InsertRow(w, r)
+		} else {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.Write([]byte("StatusMethodNotAllowed"))
+		}
 	} else if rowURLRe.MatchString(r.URL.Path) {
 		h.GetRow(w, r)
 	} else {
@@ -210,6 +219,70 @@ func (h *Handler) GetRow(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	writeJSON(w, data)
+}
+
+func (h *Handler) InsertRow(w http.ResponseWriter, r *http.Request) {
+	params := rowsURLRe.FindStringSubmatch(r.URL.Path)
+	fmt.Println("params: ", params)
+
+	tableName := params[1]
+
+	var table *Table
+	for _, t := range h.tables {
+		if t.Name == tableName {
+			table = &t
+			break
+		}
+	}
+
+	if table == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	} 
+
+	var bData map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&bData); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, err)
+		return
+	}
+
+	colNames := make([]string, 0, len(table.Columns))
+	values := make([]interface{}, 0, len(colNames))
+	for _, col := range table.Columns {
+		if col.Key != "PRI" {
+			colNames = append(colNames, col.Name)
+			val, exists := bData[col.Name]
+			if (!exists || val == nil) && col.Null == "NO" {
+				w.WriteHeader(http.StatusBadRequest)
+				writeErr(w, errors.New("Field: '" + col.Name +"' is required"))
+				return
+			}
+			values = append(values, val)
+		}
+	}
+
+	tmpls := make([]string, len(colNames))
+	for i := range tmpls {
+		tmpls[i] = "?"
+	}
+
+	sqlSt := `INSERT INTO `+table.Name+` (`+strings.Join(colNames, ",")+`)
+	VALUES (`+strings.Join(tmpls, ",")+`)`
+
+	fmt.Println("sqlSt:", sqlSt)
+	fmt.Println("values:", values)
+
+
+	_, err := h.DB.Exec(sqlSt, values...)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+	w.Write([]byte("successfully created"))
 }
 
 // utils
