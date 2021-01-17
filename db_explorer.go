@@ -204,7 +204,6 @@ func (h *Handler) GetRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
 	var table *Table
 	for _, t := range h.tables {
 		if t.Name == tableName {
@@ -224,7 +223,7 @@ func (h *Handler) GetRow(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, errors.New("table have not primary column"))
 		return
 	}
-	 
+
 	row := h.DB.QueryRow("SELECT * FROM "+table.Name+" WHERE "+table.Name+"."+prCol.Name+" = ?", rowID)
 	data, err := rowToMap(row, table.GetColNames())
 	if err != nil {
@@ -254,7 +253,7 @@ func (h *Handler) InsertRow(w http.ResponseWriter, r *http.Request) {
 	if table == nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
-	} 
+	}
 
 	var bData map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&bData); err != nil {
@@ -271,7 +270,7 @@ func (h *Handler) InsertRow(w http.ResponseWriter, r *http.Request) {
 			val, exists := bData[col.Name]
 			if (!exists || val == nil) && col.Null == "NO" {
 				w.WriteHeader(http.StatusBadRequest)
-				writeErr(w, errors.New("Field: '" + col.Name +"' is required"))
+				writeErr(w, errors.New("Field: '"+col.Name+"' is required"))
 				return
 			}
 			values = append(values, val)
@@ -283,12 +282,11 @@ func (h *Handler) InsertRow(w http.ResponseWriter, r *http.Request) {
 		tmpls[i] = "?"
 	}
 
-	sqlSt := `INSERT INTO `+table.Name+` (`+strings.Join(colNames, ",")+`)
-	VALUES (`+strings.Join(tmpls, ",")+`)`
+	sqlSt := `INSERT INTO ` + table.Name + ` (` + strings.Join(colNames, ",") + `)
+	VALUES (` + strings.Join(tmpls, ",") + `)`
 
 	fmt.Println("sqlSt:", sqlSt)
 	fmt.Println("values:", values)
-
 
 	_, err := h.DB.Exec(sqlSt, values...)
 	if err != nil {
