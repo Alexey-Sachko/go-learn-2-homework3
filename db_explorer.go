@@ -58,6 +58,17 @@ func (t *Table) GetColNames() []string {
 	return res
 }
 
+func (t *Table) GetPrimaryCol() *TableColumn {
+	var column *TableColumn
+	for _, col := range t.Columns {
+		if col.Key == "PRI" {
+			column = &col
+			break
+		}
+	}
+	return column
+}
+
 func getTables(db *sql.DB) ([]Table, error) {
 	tables := []Table{}
 
@@ -207,9 +218,14 @@ func (h *Handler) GetRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := h.DB.QueryRow("SELECT * FROM "+table.Name+" WHERE "+table.Name+".id = ?", rowID)
-	// row := h.DB.QueryRow("SELECT * FROM items WHERE items.id = ?", rowID)
-
+	prCol := table.GetPrimaryCol()
+	if prCol == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeErr(w, errors.New("table have not primary column"))
+		return
+	}
+	 
+	row := h.DB.QueryRow("SELECT * FROM "+table.Name+" WHERE "+table.Name+"."+prCol.Name+" = ?", rowID)
 	data, err := rowToMap(row, table.GetColNames())
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
