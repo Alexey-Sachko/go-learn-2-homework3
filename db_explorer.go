@@ -133,7 +133,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("StatusMethodNotAllowed"))
 		}
 	} else if rowURLRe.MatchString(r.URL.Path) {
-		h.GetRow(w, r)
+		if r.Method == http.MethodGet {
+			h.GetRow(w, r)
+		} else if r.Method == http.MethodPut {
+			h.UpdateRow(w, r)
+		} else {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.Write([]byte("StatusMethodNotAllowed"))
+		}
+
 	} else {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("Not Found"))
@@ -289,6 +297,88 @@ func (h *Handler) InsertRow(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("values:", values)
 
 	_, err := h.DB.Exec(sqlSt, values...)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte("successfully created"))
+}
+
+func (h *Handler) UpdateRow(w http.ResponseWriter, r *http.Request) {
+	params := rowURLRe.FindStringSubmatch(r.URL.Path)
+	fmt.Println("params: ", params)
+
+	tableName := params[1]
+	rowIDStr := params[2]
+
+	rowID, err := strconv.Atoi(rowIDStr)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	var table *Table
+	for _, t := range h.tables {
+		if t.Name == tableName {
+			table = &t
+			break
+		}
+	}
+
+	if table == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	var bData map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&bData); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		writeErr(w, err)
+		return
+	}
+
+	colNames := make([]string, 0, len(table.Columns))
+	values := make([]interface{}, 0, len(colNames))
+	for _, col := range table.Columns {
+		if col.Key != "PRI" {
+			colNames = append(colNames, col.Name)
+
+			val, exists := bData[col.Name]
+			if (!exists || val == nil) && col.Null == "NO" {
+				w.WriteHeader(http.StatusBadRequest)
+				writeErr(w, errors.New("Field: '"+col.Name+"' is required"))
+				return
+			}
+			values = append(values, val)
+		}
+	}
+
+	values = append(values, rowID)
+
+	var sqlCols string
+	for i, col := range colNames {
+		sqlCols += col + " = ?"
+		if len(colNames)-1 != i {
+			sqlCols += ","
+		}
+	}
+
+	prCol := table.GetPrimaryCol()
+	if prCol == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeErr(w, errors.New("table have not primary column"))
+		return
+	}
+
+	sqlSt := `UPDATE ` + table.Name + ` SET ` + sqlCols + ` WHERE ` + prCol.Name + ` = ?`
+
+	fmt.Println("sqlSt:", sqlSt)
+	fmt.Println("values:", values)
+
+	_, err = h.DB.Exec(sqlSt, values...)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		writeErr(w, err)
