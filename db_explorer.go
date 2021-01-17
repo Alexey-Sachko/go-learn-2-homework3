@@ -137,6 +137,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.GetRow(w, r)
 		} else if r.Method == http.MethodPut {
 			h.UpdateRow(w, r)
+		} else if r.Method == http.MethodDelete {
+			h.DeleteRow(w, r)
 		} else {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			w.Write([]byte("StatusMethodNotAllowed"))
@@ -387,6 +389,60 @@ func (h *Handler) UpdateRow(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte("successfully created"))
+}
+
+func (h *Handler) DeleteRow(w http.ResponseWriter, r *http.Request) {
+	params := rowURLRe.FindStringSubmatch(r.URL.Path)
+	fmt.Println("params: ", params)
+
+	tableName := params[1]
+	rowIDStr := params[2]
+
+	rowID, err := strconv.Atoi(rowIDStr)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	var table *Table
+	for _, t := range h.tables {
+		if t.Name == tableName {
+			table = &t
+			break
+		}
+	}
+
+	if table == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	prCol := table.GetPrimaryCol()
+	if prCol == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeErr(w, errors.New("table have not primary column"))
+		return
+	}
+
+	sqlSt := `DELETE FROM ` + table.Name + ` WHERE ` + prCol.Name + ` = ?`
+
+	fmt.Println("sqlSt:", sqlSt)
+
+	res, err := h.DB.Exec(sqlSt, rowID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeErr(w, err)
+		return
+	}
+
+	if aff,_ := res.RowsAffected(); aff == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("not found row"))	
+		return
+	} 
+
+	w.WriteHeader(http.StatusNoContent)
+	w.Write([]byte("successfully deleted"))
 }
 
 // utils
